@@ -1,24 +1,24 @@
 version: "3.9"
 
 services:
-  app:
-    image: ghcr.io/prem7443/Multi-Auth:latest
-    container_name: Multi-Auth
+  multi-auth:
+    image: ghcr.io/prem7443/multi-auth-api:latest
+    container_name: multi-auth-api
     restart: unless-stopped
 
     environment:
-      DATABASE_URL: postgresql://${APP1_DB_USER}:${APP1_DB_PASS}@db:5432/${APP1_DB_NAME}
-      PORT: 3001
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@multi-auth-db:5432/${DB_NAME}
+      PORT: 5000
 
     ports:
-      - "3001:3001"
+      - "5000:5000"
 
     depends_on:
-      db:
+      multi-auth-db:
         condition: service_healthy
 
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/health"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -27,21 +27,21 @@ services:
     networks:
       - appnet
 
-  db:
+  multi-auth-db:
     image: postgres:16-alpine
-    container_name: app1_db
+    container_name: multi-auth-db
     restart: unless-stopped
 
     environment:
-      POSTGRES_USER: ${APP1_DB_USER}
-      POSTGRES_PASSWORD: ${APP1_DB_PASS}
-      POSTGRES_DB: ${APP1_DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
 
     volumes:
-      - app1_db_data:/var/lib/postgresql/data
+      - multi_auth_db_data:/var/lib/postgresql/data
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${APP1_DB_USER} -d ${APP1_DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -53,4 +53,4 @@ networks:
   appnet:
 
 volumes:
-  app1_db_data:
+  multi_auth_db_data:
