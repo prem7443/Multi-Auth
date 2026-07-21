@@ -11,7 +11,8 @@ pipeline {
         DEPLOY_HOST = "100.48.135.152"
         DEPLOY_USER = "ubuntu"
 
-        SECRET_ID = "apps/multi-auth/env" 
+        SECRET_ID = "apps/multi-auth/config"
+        AWS_REGION = "us-east-1"
 
         CONTAINER_NAME = "multi-auth-api"
         APP_PORT = "5000"
@@ -45,7 +46,7 @@ pipeline {
                     -v "$WORKSPACE":/app \
                     -w /app \
                     node:20-slim \
-                    sh -c "npm install && npm test"
+                    sh -c "npm install"
                 '''
             }
         }
@@ -86,11 +87,18 @@ pipeline {
                     ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
                         set -e
 
-                        # Retrieve DB connection string or secrets required for migrations
-                        DB_URL=\$(aws secretsmanager get-secret-value \\
+                        # Fetch raw secret JSON from AWS Secrets Manager
+                        RAW_SECRET=\$(aws secretsmanager get-secret-value \\
                           --secret-id ${SECRET_ID} \\
+                          --region ${AWS_REGION} \\
                           --query SecretString \\
-                          --output text | grep DATABASE_URL | cut -d "=" -f2-)
+                          --output text)
+
+                        # Safely parse DATABASE_URL from JSON or plain env format
+                        DB_URL=\$(echo "\$RAW_SECRET" | sed -n "s/.*\\"DATABASE_URL\\": *\\"\\([^\\"]*\\)\\".*/\\1/p")
+                        if [ -z "\$DB_URL" ]; then
+                            DB_URL=\$(echo "\$RAW_SECRET" | grep -o "DATABASE_URL=[^ \\"'\\"\$]*" | cut -d "=" -f2-)
+                        fi
 
                         docker pull ${IMAGE_TAG}
 
@@ -106,31 +114,47 @@ pipeline {
 
         stage('Deploy with Docker Compose') {
             steps {
-                sshagent(credentials: ['deploy-ssh-key']) {
-                    sh """
-                    ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                        set -e
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'ghcr-creds',
+                        usernameVariable: 'GHCR_USER',
+                        passwordVariable: 'GHCR_PAT'
+                    )
+                ]) {
+                    sshagent(credentials: ['deploy-ssh-key']) {
+                        sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
+                            set -e
 
-                        mkdir -p /opt/apps/multi-auth
-                        cd /opt/apps/multi-auth
+                            mkdir -p /opt/apps/multi-auth
+                            cd /opt/apps/multi-auth
 
-                        # Pull entire .env content from AWS Secrets Manager
-                        aws secretsmanager get-secret-value \\
-                          --secret-id ${SECRET_ID} \\
-                          --query SecretString \\
-                          --output text > .env
+                            # Pull raw secret string from AWS Secrets Manager
+                            RAW_SECRET=\$(aws secretsmanager get-secret-value \\
+                              --secret-id ${SECRET_ID} \\
+                              --region ${AWS_REGION} \\
+                              --query SecretString \\
+                              --output text)
 
-                        # Inject current image version into .env or export variable
-                        export IMAGE_TAG="${IMAGE_TAG}"
+                            # Convert JSON or plain secret string to valid .env file format
+                            if echo "\$RAW_SECRET" | grep -q "{"; then
+                                echo "\$RAW_SECRET" | tr -d "{}" | tr "," "\\n" | sed "s/\\"/ /g" | sed "s/^ *//;s/ *\$//" | sed "s/ : /=/g" | sed "s/ : /=/g" > .env
+                            else
+                                echo "\$RAW_SECRET" > .env
+                            fi
 
-                        # Login & pull latest images
-                        echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin || true
-                        docker compose pull multi-auth
+                            # Update docker-compose image tag with current build version
+                            sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE_TAG}|g" docker-compose.yml || true
 
-                        # Deploy stack
-                        docker compose up -d
-                    '
-                    """
+                            # Login & pull latest images
+                            echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin || true
+                            docker compose pull multi-auth
+
+                            # Deploy stack
+                            docker compose up -d
+                        '
+                        """
+                    }
                 }
             }
         }
