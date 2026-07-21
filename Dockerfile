@@ -7,5 +7,5 @@ COPY . .
 RUN npx prisma generate
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app
-EXPOSE 3001
+EXPOSE 5000
 CMD ["node", "src/index.js"]
