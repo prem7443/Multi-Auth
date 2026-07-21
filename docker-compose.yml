@@ -2,13 +2,30 @@ version: "3.9"
 
 services:
   multi-auth:
-    image: ghcr.io/prem7443/multi-auth-api:latest
+    image: ghcr.io/prem7443/multi-auth-api:v1.0.0
     container_name: multi-auth-api
     restart: unless-stopped
 
     environment:
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASS}@multi-auth-db:5432/${DB_NAME}
-      PORT: 5000
+      DATABASE_URL: ${DATABASE_URL}
+      DB_SSL: ${DB_SSL:-false}
+      PORT: ${PORT:-5000}
+      NODE_ENV: ${NODE_ENV:-development}
+      DOMAIN: ${DOMAIN:-http://localhost}
+      
+      JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
+      JWT_ACCESS_TOKEN_EXPIRE: ${JWT_ACCESS_TOKEN_EXPIRE}
+      JWT_REFRESH_TOKEN_EXPIRE: ${JWT_REFRESH_TOKEN_EXPIRE}
+
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+
+      HRM_CLIENT_ID: ${HRM_CLIENT_ID}
+      HRM_CLIENT_SECRET: ${HRM_CLIENT_SECRET}
+      CRM_CLIENT_ID: ${CRM_CLIENT_ID}
+      CRM_CLIENT_SECRET: ${CRM_CLIENT_SECRET}
 
     ports:
       - "5000:5000"
@@ -33,15 +50,15 @@ services:
     restart: unless-stopped
 
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASS}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: auth_service
 
     volumes:
       - multi_auth_db_data:/var/lib/postgresql/data
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d auth_service"]
       interval: 10s
       timeout: 5s
       retries: 5
