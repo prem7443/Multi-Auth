@@ -1,73 +1,34 @@
-version: "3.9"
-
 services:
   multi-auth:
     image: ghcr.io/prem7443/multi-auth-api:v1.0.0
     container_name: multi-auth-api
     restart: unless-stopped
-
     environment:
       DATABASE_URL: ${DATABASE_URL}
       DB_SSL: ${DB_SSL:-false}
       PORT: ${PORT:-5000}
       NODE_ENV: ${NODE_ENV:-development}
       DOMAIN: ${DOMAIN:-http://localhost}
-      
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
       JWT_ACCESS_TOKEN_EXPIRE: ${JWT_ACCESS_TOKEN_EXPIRE}
       JWT_REFRESH_TOKEN_EXPIRE: ${JWT_REFRESH_TOKEN_EXPIRE}
-
       CORS_ORIGIN: ${CORS_ORIGIN}
       COOKIE_SAMESITE: ${COOKIE_SAMESITE}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN}
-
       HRM_CLIENT_ID: ${HRM_CLIENT_ID}
       HRM_CLIENT_SECRET: ${HRM_CLIENT_SECRET}
       CRM_CLIENT_ID: ${CRM_CLIENT_ID}
       CRM_CLIENT_SECRET: ${CRM_CLIENT_SECRET}
-
     ports:
       - "5000:5000"
-
-    depends_on:
-      multi-auth-db:
-        condition: service_healthy
-
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:5000/health"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
-
     networks:
       - appnet
-
-  multi-auth-db:
-    image: postgres:16-alpine
-    container_name: multi-auth-db
-    restart: unless-stopped
-
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: auth_service
-
-    volumes:
-      - multi_auth_db_data:/var/lib/postgresql/data
-
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d auth_service"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-    networks:
-      - appnet
-
 networks:
   appnet:
-
-volumes:
-  multi_auth_db_data:
