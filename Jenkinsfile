@@ -121,8 +121,6 @@ cd /opt/apps/multi-auth
 
 RAW_SECRET=\$(aws secretsmanager get-secret-value --secret-id ${SECRET_ID} --region ${AWS_REGION} --query SecretString --output text)
 
-# Secrets Manager already stores multi-line values (e.g. PEM keys) as
-# single-line strings with literal \n escapes, so just pass them through.
 echo "\$RAW_SECRET" | jq -r 'to_entries[] | "\\(.key)=\\(.value)"' > .env
 
 sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE_TAG}|g" docker-compose.yml
