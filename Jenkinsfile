@@ -121,9 +121,9 @@ cd /opt/apps/multi-auth
 
 RAW_SECRET=\$(aws secretsmanager get-secret-value --secret-id ${SECRET_ID} --region ${AWS_REGION} --query SecretString --output text)
 
-# Escape literal newlines inside values (e.g. PEM keys) as \\n so each
-# KEY=VALUE stays on a single line in .env
-echo "\$RAW_SECRET" | jq -r 'to_entries[] | "\\(.key)=\\(.value | tostring | gsub("\\n"; "\\\\n"))"' > .env
+# Secrets Manager already stores multi-line values (e.g. PEM keys) as
+# single-line strings with literal \n escapes, so just pass them through.
+echo "\$RAW_SECRET" | jq -r 'to_entries[] | "\\(.key)=\\(.value)"' > .env
 
 sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE_TAG}|g" docker-compose.yml
 
