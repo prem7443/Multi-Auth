@@ -53,11 +53,11 @@ pipeline {
 
         stage('Build Image') {
             steps {
-                sh """
+                sh '''
                 docker build \
-                  -t ${IMAGE_TAG} \
-                  -t ${IMAGE}:latest .
-                """
+                  -t "$IMAGE_TAG" \
+                  -t "$IMAGE:latest" .
+                '''
             }
         }
 
@@ -73,8 +73,8 @@ pipeline {
                     sh '''
                     echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
-                    docker push ${IMAGE_TAG}
-                    docker push ${IMAGE}:latest
+                    docker push "$IMAGE_TAG"
+                    docker push "$IMAGE:latest"
                     '''
                 }
             }
@@ -84,29 +84,14 @@ pipeline {
             steps {
                 sshagent(credentials: ['deploy-ssh-key']) {
                     sh """
-                    ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                        set -e
+                    cat << 'CMD_EOF' | base64 -w 0 | ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} 'base64 -d | bash'
+set -e
+RAW_SECRET=\$(aws secretsmanager get-secret-value --secret-id ${SECRET_ID} --region ${AWS_REGION} --query SecretString --output text)
+DB_URL=\$(echo "\$RAW_SECRET" | jq -r .DATABASE_URL)
 
-                        # Fetch raw secret JSON from AWS Secrets Manager
-                        RAW_SECRET=\$(aws secretsmanager get-secret-value \\
-                          --secret-id ${SECRET_ID} \\
-                          --region ${AWS_REGION} \\
-                          --query SecretString \\
-                          --output text)
-
-                        # Safely parse DATABASE_URL from JSON or plain env format
-                        DB_URL=\$(echo "\$RAW_SECRET" | sed -n "s/.*\\"DATABASE_URL\\": *\\"\\([^\\"]*\\)\\".*/\\1/p")
-                        if [ -z "\$DB_URL" ]; then
-                            DB_URL=\$(echo "\$RAW_SECRET" | grep -o "DATABASE_URL=[^ \\"'\\"\$]*" | cut -d "=" -f2-)
-                        fi
-
-                        docker pull ${IMAGE_TAG}
-
-                        docker run --rm \\
-                          -e DATABASE_URL="\$DB_URL" \\
-                          ${IMAGE_TAG} \\
-                          npx prisma migrate deploy
-                    '
+docker pull ${IMAGE_TAG}
+docker run --rm -e DATABASE_URL="\$DB_URL" ${IMAGE_TAG} npx prisma migrate deploy
+CMD_EOF
                     """
                 }
             }
@@ -122,37 +107,30 @@ pipeline {
                     )
                 ]) {
                     sshagent(credentials: ['deploy-ssh-key']) {
+                        // Ensure remote dir exists, then push docker-compose.yml
+                        // from the Jenkins workspace to the deploy host.
                         sh """
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                            set -e
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} 'mkdir -p /opt/apps/multi-auth'
+                        scp -o StrictHostKeyChecking=no docker-compose.yml ${DEPLOY_USER}@${DEPLOY_HOST}:/opt/apps/multi-auth/docker-compose.yml
+                        """
 
-                            mkdir -p /opt/apps/multi-auth
-                            cd /opt/apps/multi-auth
+                        sh """
+                        cat << 'CMD_EOF' | base64 -w 0 | ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} 'base64 -d | bash'
+set -e
+cd /opt/apps/multi-auth
 
-                            # Pull raw secret string from AWS Secrets Manager
-                            RAW_SECRET=\$(aws secretsmanager get-secret-value \\
-                              --secret-id ${SECRET_ID} \\
-                              --region ${AWS_REGION} \\
-                              --query SecretString \\
-                              --output text)
+RAW_SECRET=\$(aws secretsmanager get-secret-value --secret-id ${SECRET_ID} --region ${AWS_REGION} --query SecretString --output text)
 
-                            # Convert JSON or plain secret string to valid .env file format
-                            if echo "\$RAW_SECRET" | grep -q "{"; then
-                                echo "\$RAW_SECRET" | tr -d "{}" | tr "," "\\n" | sed "s/\\"/ /g" | sed "s/^ *//;s/ *\$//" | sed "s/ : /=/g" | sed "s/ : /=/g" > .env
-                            else
-                                echo "\$RAW_SECRET" > .env
-                            fi
+# Escape literal newlines inside values (e.g. PEM keys) as \\n so each
+# KEY=VALUE stays on a single line in .env
+echo "\$RAW_SECRET" | jq -r 'to_entries[] | "\\(.key)=\\(.value | tostring | gsub("\\n"; "\\\\n"))"' > .env
 
-                            # Update docker-compose image tag with current build version
-                            sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE_TAG}|g" docker-compose.yml || true
+sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE_TAG}|g" docker-compose.yml
 
-                            # Login & pull latest images
-                            echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin || true
-                            docker compose pull multi-auth
-
-                            # Deploy stack
-                            docker compose up -d
-                        '
+echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+docker compose pull multi-auth
+docker compose up -d
+CMD_EOF
                         """
                     }
                 }
@@ -195,10 +173,10 @@ pipeline {
             steps {
                 sshagent(credentials: ['deploy-ssh-key']) {
                     sh """
-                    ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                        mkdir -p /opt/apps
-                        echo ${VERSION} > ${LASTGOOD_FILE}
-                    '
+                    cat << 'CMD_EOF' | base64 -w 0 | ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} 'base64 -d | bash'
+mkdir -p /opt/apps
+echo "${VERSION}" > ${LASTGOOD_FILE}
+CMD_EOF
                     """
                 }
             }
@@ -212,29 +190,24 @@ pipeline {
             catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                 sshagent(credentials: ['deploy-ssh-key']) {
                     sh """
-                    ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                        set -e
+                    cat << 'CMD_EOF' | base64 -w 0 | ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} 'base64 -d | bash'
+set -e
+if [ -s "${LASTGOOD_FILE}" ]; then
+    LAST_GOOD=\$(cat "${LASTGOOD_FILE}" | tr -d " \t\n\r")
 
-                        if [ -s "${LASTGOOD_FILE}" ]; then
-                            LAST_GOOD=\$(cat "${LASTGOOD_FILE}" | tr -d " \t\n\r")
-
-                            if [ -n "\$LAST_GOOD" ]; then
-                                echo "Rolling back multi-auth to version: \$LAST_GOOD"
-
-                                cd /opt/apps/multi-auth
-
-                                # Update image tag to last good version
-                                sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE}:\$LAST_GOOD|g" docker-compose.yml
-
-                                docker compose pull multi-auth
-                                docker compose up -d multi-auth
-                            else
-                                echo "Rollback file is empty. Skipping rollback."
-                            fi
-                        else
-                            echo "No rollback version recorded."
-                        fi
-                    '
+    if [ -n "\$LAST_GOOD" ]; then
+        echo "Rolling back multi-auth to version: \$LAST_GOOD"
+        cd /opt/apps/multi-auth
+        sed -i "s|image: ${IMAGE}:.*|image: ${IMAGE}:\$LAST_GOOD|g" docker-compose.yml
+        docker compose pull multi-auth
+        docker compose up -d multi-auth
+    else
+        echo "Rollback file is empty. Skipping rollback."
+    fi
+else
+    echo "No rollback version recorded."
+fi
+CMD_EOF
                     """
                 }
             }
